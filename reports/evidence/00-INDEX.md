@@ -1,6 +1,6 @@
 # Evidence — Tuần 4
 
-Sinh tự động bởi `scripts/evidence.sh` lúc 2026-08-13T15:13:30+07:00.
+Sinh tự động bởi `scripts/evidence.sh` lúc 2026-08-15T14:50:44+07:00.
 Tái tạo: `bash scripts/up.sh && set -a; . ./.env; set +a && bash scripts/evidence.sh`
 
 | File | Chứng minh điều gì |

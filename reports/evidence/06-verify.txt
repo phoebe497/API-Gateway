@@ -4,7 +4,7 @@
 
 == pytest ==
 ...........................                                              [100%]
-27 passed in 4.55s
+27 passed in 12.23s
 
 == secret scan: API key must not be tracked ==
 PASS: key value not present outside .env

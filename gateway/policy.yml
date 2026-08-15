@@ -15,9 +15,9 @@ limits:
   # Upstream timeout in seconds; exceeding it yields 504.
   timeout_seconds: 5
   # Reject request bodies larger than this with 413.
-  max_request_bytes: 8192
+  max_request_bytes: 65536      #64KB
   # Truncate upstream response bodies to this size (defense against huge reads).
-  max_response_bytes: 65536
+  max_response_bytes: 262144    #256KB
 
 # The allowlist. Anything not matching method+path here is refused with 403 and
 # never reaches an upstream. {seg} matches exactly one path segment.
@@ -34,6 +34,14 @@ routes:
     method: GET
     path: /slow
     upstream: http://demo-api:8000/slow
+  - id: big
+    method: GET
+    path: /big
+    upstream: http://demo-api:8000/big
+  - id: status
+    method: GET
+    path: /status/{code}
+    upstream: http://demo-api:8000/status/{code}
   - id: item-detail
     method: GET
     path: /api/items/{id}

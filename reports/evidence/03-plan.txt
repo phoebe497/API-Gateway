@@ -1,31 +1,35 @@
 ===============================================================
 # Agent proposes route_id+payload_id, tool resolves & executes
 # command : safe_probe plan --goal 'input validation'
-# captured: 2026-08-13T15:13:30+07:00
+# captured: 2026-08-15T14:50:44+07:00
 ===============================================================
 
-# Agent proposes 11 step(s) for goal: 'input validation'
+# Agent proposes 13 step(s) for goal: 'input validation'
    1. GET  route=health  # read-only reachability check
    2. GET  route=items-list  # read-only reachability check
-   3. GET  route=item-detail  # read-only reachability check
-   4. POST route=echo payload=empty-string  # exercise input handling with 'empty-string'
-   5. POST route=echo payload=wrong-type-int  # exercise input handling with 'wrong-type-int'
-   6. POST route=echo payload=long-string  # exercise input handling with 'long-string'
-   7. POST route=echo payload=special-chars  # exercise input handling with 'special-chars'
-   8. POST route=login payload=empty-string  # exercise input handling with 'empty-string'
-   9. POST route=login payload=wrong-type-int  # exercise input handling with 'wrong-type-int'
-  10. POST route=login payload=long-string  # exercise input handling with 'long-string'
-  11. POST route=login payload=special-chars  # exercise input handling with 'special-chars'
+   3. GET  route=big  # read-only reachability check
+   4. GET  route=status  # read-only reachability check
+   5. GET  route=item-detail  # read-only reachability check
+   6. POST route=echo payload=empty-string  # exercise input handling with 'empty-string'
+   7. POST route=echo payload=wrong-type-int  # exercise input handling with 'wrong-type-int'
+   8. POST route=echo payload=long-string  # exercise input handling with 'long-string'
+   9. POST route=echo payload=special-chars  # exercise input handling with 'special-chars'
+  10. POST route=login payload=empty-string  # exercise input handling with 'empty-string'
+  11. POST route=login payload=wrong-type-int  # exercise input handling with 'wrong-type-int'
+  12. POST route=login payload=long-string  # exercise input handling with 'long-string'
+  13. POST route=login payload=special-chars  # exercise input handling with 'special-chars'
 
 # Tool executes (via gateway; it resolves route_id -> path, never the planner):
    1. GET  /health -> 200 health
    2. GET  /api/items -> 200 items-list
-   3. GET  /api/items/1 -> 200 item-detail
-   4. POST /echo [empty-string] -> 200 echo
-   5. POST /echo [wrong-type-int] -> 200 echo
-   6. POST /echo [long-string] -> 200 echo
-   7. POST /echo [special-chars] -> 200 echo
-   8. POST /login [empty-string] -> 422 login
-   9. POST /login [wrong-type-int] -> 422 login
-  10. POST /login [long-string] -> 422 login
-  11. POST /login [special-chars] -> 422 login
+   3. GET  /big -> 200 big
+   4. GET  /status/1 -> 400 status
+   5. GET  /api/items/1 -> 200 item-detail
+   6. POST /echo [empty-string] -> 200 echo
+   7. POST /echo [wrong-type-int] -> 200 echo
+   8. POST /echo [long-string] -> 200 echo
+   9. POST /echo [special-chars] -> 200 echo
+  10. POST /login [empty-string] -> 422 login
+  11. POST /login [wrong-type-int] -> 422 login
+  12. POST /login [long-string] -> 422 login
+  13. POST /login [special-chars] -> 422 login

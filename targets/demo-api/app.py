@@ -31,11 +31,28 @@ def list_items() -> dict[str, Any]:
 
 
 @app.get("/slow")
-async def slow(seconds: float = 6.0) -> dict[str, str]:
+async def slow(ms: int = 6000) -> dict[str, str]:
     # Deliberately slower than the gateway's timeout so the gateway returns 504.
     # Read-only and safe: it just sleeps, touching no data.
-    await asyncio.sleep(seconds)
+    await asyncio.sleep(ms / 1000)
     return {"status": "eventually done"}
+
+
+@app.get("/big")
+async def big(kb: int = 300) -> Response:
+    # Returns a body of `kb` kilobytes so the gateway's response-size cap can be
+    # observed (it truncates and sets X-Truncated). Read-only, no data touched.
+    kb = max(1, min(kb, 2048))
+    return Response(content="X" * (kb * 1024), media_type="text/plain")
+
+
+@app.get("/status/{code}")
+def status_echo(code: int) -> Response:
+    # Echoes back an arbitrary HTTP status so the gateway's passthrough of the
+    # upstream status can be demonstrated. Invalid codes collapse to 400.
+    if not 100 <= code <= 599:
+        return JSONResponse({"error": "invalid status", "requested": code}, status_code=400)
+    return JSONResponse({"echoed_status": code}, status_code=code)
 
 
 @app.get("/api/items/{item_id}")

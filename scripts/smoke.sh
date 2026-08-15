@@ -39,8 +39,8 @@ check "404 upstream passthrough" 404 "$(code -H "X-API-Key: $KEY" "$GW/api/items
 # 405: allowlisted path, wrong verb (GET on a POST-only route).
 check "405 wrong method" 405 "$(code -H "X-API-Key: $KEY" "$GW/echo")"
 
-# 413: body larger than limits.max_request_bytes (default 8192).
-big="$(python3 -c 'print("A"*9000)')"
+# 413: body larger than limits.max_request_bytes (64 KB).
+big="$(python3 -c 'print("A"*70000)')"
 check "413 payload too large" 413 \
   "$(code -H "X-API-Key: $KEY" -H "Content-Type: application/json" -X POST --data "\"$big\"" "$GW/echo")"
 

@@ -1,12 +1,14 @@
 ===============================================================
 # Suite: every safe payload against every allowlisted route
 # command : safe_probe suite
-# captured: 2026-08-13T15:13:30+07:00
+# captured: 2026-08-15T14:50:44+07:00
 ===============================================================
 
 GET  /health              -> 200 [health] {"status":"ok"}
 GET  /api/items           -> 200 [items-list] {"items":[{"id":1,"name":"widget","price":9.99},{"id":2,"name":"gadget","price":19.5},{"id":3,"name":"gizmo","price":4.0}]}
 GET  /slow                -> 504 {"error":"upstream timeout"}
+GET  /big                 -> 200 [big] XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GET  /status/1            -> 400 [status] {"error":"invalid status","requested":1}
 GET  /api/items/1         -> 200 [item-detail] {"id":1,"name":"widget","price":9.99}
 POST /echo                [empty-array               ] -> 200 echo
 POST /echo                [empty-object              ] -> 200 echo
