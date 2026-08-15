@@ -1,0 +1,32 @@
+# Topology IS the proof. demo-api has no `ports:` and lives only on the
+# `internal` network (internal: true => no route to the host/outside). The only
+# service with a published port is the gateway. Therefore every request that
+# reaches demo-api provably passed through the gateway. Adding `ports:` to
+# demo-api would silently destroy that guarantee.
+
+services:
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    environment:
+      # Supplied by scripts/up.sh via the .env file; never committed.
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?set GATEWAY_API_KEY (run scripts/up.sh)}
+      POLICY_PATH: /app/policy.yml
+    networks:
+      - edge
+      - internal
+    depends_on:
+      - demo-api
+
+  demo-api:
+    build: ./targets/demo-api
+    # Intentionally NO ports: unreachable except through the gateway.
+    networks:
+      - internal
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    internal: true

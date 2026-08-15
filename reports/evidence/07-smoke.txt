@@ -1,0 +1,11 @@
+== gateway policy smoke ==
+PASS  401 missing key              401
+PASS  403 not in allowlist         403
+PASS  404 upstream passthrough     404
+PASS  405 wrong method             405
+PASS  413 payload too large        413
+  (504 check waits for the gateway timeout ...)
+PASS  504 upstream timeout         504
+PASS  429 rate limit (drain)       429
+
+all checks passed

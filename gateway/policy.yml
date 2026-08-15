@@ -1,0 +1,48 @@
+# The single source of truth for what the tool is allowed to do. app.py reads
+# this at startup and knows nothing else; changing policy means editing THIS
+# file, not the code. The tool cannot read this file (different process, no
+# shared volume) and only learns the allowlist via GET /_gateway/routes.
+
+# Header the tool must send. The expected secret is NOT stored here; it is read
+# from the named environment variable so the key never lands in a committed file.
+auth:
+  header: X-API-Key
+  key_env: GATEWAY_API_KEY
+
+limits:
+  # Requests per minute per API key (token bucket). Draining this yields 429.
+  rate_per_minute: 30
+  # Upstream timeout in seconds; exceeding it yields 504.
+  timeout_seconds: 5
+  # Reject request bodies larger than this with 413.
+  max_request_bytes: 8192
+  # Truncate upstream response bodies to this size (defense against huge reads).
+  max_response_bytes: 65536
+
+# The allowlist. Anything not matching method+path here is refused with 403 and
+# never reaches an upstream. {seg} matches exactly one path segment.
+routes:
+  - id: health
+    method: GET
+    path: /health
+    upstream: http://demo-api:8000/health
+  - id: items-list
+    method: GET
+    path: /api/items
+    upstream: http://demo-api:8000/api/items
+  - id: slow
+    method: GET
+    path: /slow
+    upstream: http://demo-api:8000/slow
+  - id: item-detail
+    method: GET
+    path: /api/items/{id}
+    upstream: http://demo-api:8000/api/items/{id}
+  - id: echo
+    method: POST
+    path: /echo
+    upstream: http://demo-api:8000/echo
+  - id: login
+    method: POST
+    path: /login
+    upstream: http://demo-api:8000/login

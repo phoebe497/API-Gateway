@@ -1,0 +1,7 @@
+===============================================================
+# Allowlist the gateway publishes (tool does not hard-code it)
+# command : safe_probe routes
+# captured: 2026-08-13T15:13:30+07:00
+===============================================================
+
+{"routes":[{"id":"health","method":"GET","path":"/health"},{"id":"items-list","method":"GET","path":"/api/items"},{"id":"slow","method":"GET","path":"/slow"},{"id":"item-detail","method":"GET","path":"/api/items/{id}"},{"id":"echo","method":"POST","path":"/echo"},{"id":"login","method":"POST","path":"/login"}]}

@@ -1,0 +1,15 @@
+# Secrets: the API key lives here and must never be committed.
+.env
+*.key
+
+# Raw output is regenerate-able (see AGENTS.md): never a source of truth.
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/

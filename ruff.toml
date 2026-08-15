@@ -1,0 +1,7 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+# B008 (function call in argument default) is the idiomatic FastAPI pattern for
+# Body/Query/Depends. It is intentional here, not a bug.
+ignore = ["B008"]

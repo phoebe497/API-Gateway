@@ -1,0 +1,18 @@
+
+== ruff (lint) ==
+[1;32mAll checks passed![0m
+
+== pytest ==
+...........................                                              [100%]
+27 passed in 4.55s
+
+== secret scan: API key must not be tracked ==
+PASS: key value not present outside .env
+
+== audit logs must not contain the key ==
+PASS: no key in audit log
+
+== ggshield (secret scanner) ==
+SKIP: ggshield could not run (needs 'ggshield auth login' / GITGUARDIAN_API_KEY)
+
+verify: OK

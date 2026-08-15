@@ -1,0 +1,46 @@
+===============================================================
+# Suite: every safe payload against every allowlisted route
+# command : safe_probe suite
+# captured: 2026-08-13T15:13:30+07:00
+===============================================================
+
+GET  /health              -> 200 [health] {"status":"ok"}
+GET  /api/items           -> 200 [items-list] {"items":[{"id":1,"name":"widget","price":9.99},{"id":2,"name":"gadget","price":19.5},{"id":3,"name":"gizmo","price":4.0}]}
+GET  /slow                -> 504 {"error":"upstream timeout"}
+GET  /api/items/1         -> 200 [item-detail] {"id":1,"name":"widget","price":9.99}
+POST /echo                [empty-array               ] -> 200 echo
+POST /echo                [empty-object              ] -> 200 echo
+POST /echo                [empty-string              ] -> 200 echo
+POST /echo                [float-tiny                ] -> 200 echo
+POST /echo                [int-max                   ] -> 200 echo
+POST /echo                [int-min                   ] -> 200 echo
+POST /echo                [long-string               ] -> 200 echo
+POST /echo                [negative                  ] -> 200 echo
+POST /echo                [nested                    ] -> 200 echo
+POST /echo                [null                      ] -> 200 echo
+POST /echo                [special-chars             ] -> 200 echo
+POST /echo                [unicode                   ] -> 200 echo
+POST /echo                [whitespace                ] -> 200 echo
+POST /echo                [wrong-type-bool           ] -> 200 echo
+POST /echo                [wrong-type-float          ] -> 200 echo
+POST /echo                [wrong-type-int            ] -> 200 echo
+POST /echo                [wrong-type-list-for-object] -> 200 echo
+POST /echo                [zero                      ] -> 200 echo
+POST /login               [empty-array               ] -> 422 login
+POST /login               [empty-object              ] -> 401 login
+POST /login               [empty-string              ] -> 422 login
+POST /login               [float-tiny                ] -> 422 login
+POST /login               [int-max                   ] -> 422 login
+POST /login               [int-min                   ] -> 422 login
+POST /login               [long-string               ] -> 422 login
+POST /login               [negative                  ] -> 422 login
+POST /login               [nested                    ] -> 401 login
+POST /login               [null                      ] -> 401 login
+POST /login               [special-chars             ] -> 422 login
+POST /login               [unicode                   ] -> 422 login
+POST /login               [whitespace                ] -> 422 login
+POST /login               [wrong-type-bool           ] -> 422 login
+POST /login               [wrong-type-float          ] -> 422 login
+POST /login               [wrong-type-int            ] -> 422 login
+POST /login               [wrong-type-list-for-object] -> 422 login
+POST /login               [zero                      ] -> 422 login
