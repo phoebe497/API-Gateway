@@ -6,6 +6,9 @@
 data/*
 !data/.gitkeep
 
+# Kịch bản demo/nói chuyện với mentor: dùng cục bộ, không đưa vào repo.
+docs/week4.md
+
 # Python
 __pycache__/
 *.py[cod]

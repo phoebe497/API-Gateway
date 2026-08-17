@@ -1,187 +1,198 @@
 # Tuần 4 — API Gateway và kiểm thử request an toàn
 
-- Ngày: 2026-08-12
-- Phạm vi: đặt gateway trước ứng dụng thử nghiệm; công cụ Python gửi request qua
-  gateway; agent đề xuất request và công cụ thực hiện.
+- **Người thực hiện:** Nguyễn Như Yến Phương
+- **Ngày:** 2026-08-12
+- **Repo:** https://github.com/phoebe497/API-Gateway
+- **Mục tiêu:** đặt một API Gateway trước ứng dụng thử nghiệm, viết công cụ Python
+  chỉ biết đúng địa chỉ gateway để gửi request kiểm thử với payload an toàn, và
+  demo một agent đề xuất request để công cụ thực hiện. Yêu cầu xuyên suốt:
+  **gateway là thứ duy nhất quyết định request nào được đi tiếp** — guardrail nằm
+  ngoài tiến trình bị kiểm thử.
 
-## 1. Kiến trúc
+## 1. Tổng quan những gì đã triển khai
 
+- **API Gateway tự viết** (FastAPI + httpx) đóng vai reverse proxy: xác thực API
+  key, giới hạn tần suất, kiểm tra allowlist, giới hạn kích thước body/response,
+  chuyển tiếp lên upstream và ghi nhật ký. Mọi ngưỡng/quy tắc đọc từ
+  `gateway/policy.yml`, code không hard-code chính sách.
+- **Ứng dụng thử nghiệm `demo-api`** — target chỉ-đọc/phản chiếu, đặt trên mạng
+  nội bộ **không publish port** nên chỉ tới được qua gateway.
+- **Công cụ Python `safe_probe`** (stdlib-only): gửi GET/POST, đặt header, đọc
+  status và một phần response; tự áp giới hạn phía client (tần suất, timeout, kích
+  thước đọc); ghi audit log; và một planner đề xuất request an toàn.
+- **Nhật ký request/response** ở hai phía (gateway và tool), tuyệt đối không lưu
+  API key.
+- **Bộ script vận hành** (`up/down/smoke/verify/evidence/demo`) và **bằng chứng
+  tái sinh được** trong `reports/evidence/`.
+
+## 2. Kiến trúc
+
+```mermaid
+flowchart LR
+  subgraph host["Máy host"]
+    TOOL["safe_probe (tool)<br/>stdlib-only, biết đúng 1 địa chỉ"]
+    CURL["curl (kiểm chứng thủ công)"]
+  end
+  subgraph edge["network: edge (bridge)"]
+    GW["gateway :8080<br/>policy.yml + audit"]
+  end
+  subgraph internal["network: internal (internal: true)"]
+    API["demo-api<br/>KHÔNG publish port"]
+  end
+  TOOL -->|"+ X-API-Key"| GW
+  CURL -->|"+ X-API-Key"| GW
+  GW -->|proxy hợp lệ| API
+  GW -.->|ghi mỗi request| LOG[("data/gateway-audit.jsonl")]
 ```
-                         published :8080
-   safe_probe (tool)  ─────────────────────►  gateway  ──►  demo-api
-   stdlib-only, biết                          (policy.yml)    (internal: true,
-   đúng 1 địa chỉ                              401/403/404/     KHÔNG publish port)
-                                               405/413/429/504
-```
 
-- `gateway/` — reverse proxy generic, mọi quyết định đọc từ `gateway/policy.yml`;
-  ghi nhật ký mọi request ra `data/gateway-audit.jsonl` (`gateway/audit.py`).
-- `targets/demo-api/` — target chỉ-đọc/phản chiếu (`/health`, `/api/items`,
-  `/api/items/{id}`, `/slow`, `/big`, `/status/{code}`, `/echo`, `/login`).
-- `src/safe_probe/` — công cụ Python stdlib-only: `client · limits · payloads ·
-  audit · plan · cli`.
-- Lý do thiết kế: `docs/adr/0001` (chọn gateway tự viết) và `docs/adr/0002`
+- **`gateway/`** — reverse proxy generic. Chuỗi kiểm soát (auth → rate limit →
+  allowlist → size → proxy) chạy theo thứ tự cố định; mọi quyết định lấy từ
+  `gateway/policy.yml`. Ghi nhật ký mọi request ra `data/gateway-audit.jsonl`
+  (`gateway/audit.py`).
+- **`targets/demo-api/`** — target an toàn: `/health`, `/api/items`,
+  `/api/items/{id}`, `/echo` (phản chiếu), `/slow` (giả lập chậm → test timeout),
+  `/big` (trả body lớn → test cắt response), `/status/{code}` (echo status),
+  `/login` (luôn từ chối). Không endpoint nào đổi dữ liệu thật.
+- **`src/safe_probe/`** — công cụ Python stdlib-only: `client · limits · payloads
+  · audit · plan · cli`. Không import `gateway/`, không hard-code allowlist (học
+  qua `GET /_gateway/routes`), payload chỉ gồm chuỗi dài/ký tự đặc biệt/rỗng/sai
+  kiểu (mẫu phá hoại bị chặn bởi `FORBIDDEN_PATTERNS`).
+- **Nguyên tắc cốt lõi:** guardrail đặt **ngoài** tiến trình bị kiểm thử. Kể cả
+  công cụ bị lỗi hay chiếm quyền, nó cũng không sửa được policy của một process
+  khác. Chi tiết: `docs/adr/0001` (chọn gateway tự viết) và `docs/adr/0002`
   (guardrail hai lớp).
 
-## 2. Bằng chứng theo tiêu chí hoàn thành
+## 3. Pipeline xử lý request + kiểm chứng bằng `curl`
 
-> **Bằng chứng tái sinh được.** Mọi output dưới đây được sinh tự động bởi
-> `scripts/evidence.sh` và lưu thô trong `reports/evidence/` (xem
-> `reports/evidence/00-INDEX.md`). Không chép tay — xoá thư mục và chạy lại
-> `bash scripts/evidence.sh` sẽ cho kết quả tương đương. Trích đoạn dưới đây chỉ
-> để tiện đọc; nguồn gốc là các file trong `reports/evidence/`.
+Mỗi request phải **qua hết** các cổng dưới đây mới tới target; mỗi khối quyết định
+đều có một lệnh `curl` chứng minh.
 
-| Tiêu chí | File bằng chứng |
-|---|---|
-| Endpoint bị cấm không gọi được | `evidence/07-smoke.txt` (403) |
-| Mọi request qua gateway (topology) | `evidence/01-topology.txt` |
-| Allowlist do gateway công bố | `evidence/02-routes.txt` |
-| Agent đề xuất + công cụ thực hiện | `evidence/03-plan.txt` |
-| Bảng suite payload × route | `evidence/04-suite.txt` |
-| Nhật ký không lưu key | `evidence/05-redaction.txt` |
-| Nhật ký request/response (gateway) | `evidence/08-request-log.txt` |
-| Đủ mã 401/403/404/405/413/429/504 | `evidence/07-smoke.txt` |
-| ruff + pytest + quét secret | `evidence/06-verify.txt` |
-
-### 2.1 Không thể gọi trực tiếp endpoint bị cấm
-
-`safe_probe get /ftp` → **403** (không chạm tới upstream):
-
-```
-403 {"error":"forbidden: not in allowlist"}
+```mermaid
+flowchart TB
+  REQ["Request tới gateway + API key"] --> AUTH{"Key hợp lệ?"}
+  AUTH -->|401| DENY1["Từ chối"]
+  AUTH -->|ok| RATE{"Trong rate limit?"}
+  RATE -->|429| DENY2["Từ chối"]
+  RATE -->|ok| ROUTE{"Path trong allowlist?"}
+  ROUTE -->|403| DENY3["Từ chối"]
+  ROUTE -->|có| SIZE{"Body ≤ 64KB?"}
+  SIZE -->|413| DENY4["Từ chối"]
+  SIZE -->|ok| PROXY["Proxy → demo-api"]
+  PROXY --> ECHO["POST /echo → phản chiếu"]
+  PROXY --> SLOW["GET /slow?ms= → 504 nếu quá 5s"]
+  PROXY --> BIG["GET /big?kb= → cắt tại 256KB"]
+  PROXY --> ST["GET /status/{code} → echo status"]
 ```
 
-Công cụ **không** hard-code allowlist; nó khám phá qua `GET /_gateway/routes`.
-Nếu đoán sai path, gateway từ chối — đúng như thiết kế.
+Chuẩn bị (nạp API key, đặt biến cho gọn):
 
-### 2.2 Mọi request đều đi qua gateway (bằng chứng topology)
-
-`docker compose ps` — chỉ gateway có port; demo-api trống cột PORTS:
-
-```
-SERVICE   STATUS        PORTS
-gateway   Up            0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
-demo-api  Up
+```bash
+set -a; . ./.env; set +a
+KEY="$GATEWAY_API_KEY"; BASE="http://localhost:8080"
 ```
 
-Thử truy cập thẳng demo-api (`curl http://localhost:8000/health`) → `000`
-(unreachable). Không có đường nào tới target ngoài gateway.
+```bash
+# AUTH — thiếu key → 401; có key → 200
+curl -s -o /dev/null -w "%{http_code}\n" "$BASE/api/items"                       # 401
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" "$BASE/api/items"  # 200
 
-### 2.3 Đầy đủ mã từ chối — `scripts/smoke.sh`
+# RATE — vượt 30 req/phút → 429 (30 request đầu 200, phần dư 429)
+for i in $(seq 1 40); do curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "X-API-Key: $KEY" "$BASE/health"; done | sort | uniq -c        # 30x200, 10x429
 
+# ROUTE — path ngoài allowlist → 403 (không chạm target)
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" "$BASE/ftp"        # 403
+
+# SIZE — body ~70KB > 64KB → 413
+curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  --data "$(python3 -c 'print("A"*70000)')" "$BASE/echo"                         # 413
+
+# PROXY — bốn hành vi mẫu ở target
+curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"msg":"hello","n":42}' "$BASE/echo"          # {"received":{"msg":"hello","n":42}}
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" "$BASE/slow?ms=6000"   # 504
+curl -s -D - -o /dev/null -H "X-API-Key: $KEY" "$BASE/big?kb=300" \
+  | grep -i x-truncated                               # x-truncated: true (cắt tại 256KB)
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" "$BASE/status/418"     # 418
 ```
-== gateway policy smoke ==
-PASS  401 missing key              401
-PASS  403 not in allowlist         403
-PASS  404 upstream passthrough     404
-PASS  405 wrong method             405
-PASS  413 payload too large        413
-PASS  504 upstream timeout         504
-PASS  429 rate limit (drain)       429
-all checks passed
-```
 
-### 2.4 Công cụ xử lý lỗi timeout và lỗi kết nối
+Toàn bộ 7 mã từ chối (401/403/404/405/413/429/504) cũng được `scripts/smoke.sh`
+kiểm tự động (`evidence/07-smoke.txt`).
 
-`safe_probe` trả về kết quả có cấu trúc, phân biệt rõ hai loại lỗi:
+## 4. Nhật ký request/response (deliverable #4)
 
-- timeout → `error="timeout"`
-- mất kết nối → `error="connection error: [Errno 111] Connection refused"`
-
-Được phủ bởi `tests/test_client.py::test_timeout_is_handled` và
-`::test_connection_error_is_handled`.
-
-### 2.5 Nhật ký request/response
-
-Có **hai** file log bổ trợ nhau, đều nằm trong `data/`, đều **không** chứa key:
+Hai file log bổ trợ nhau, đều nằm trong `data/` và **không** chứa API key:
 
 | File | Ai ghi | Ghi khi nào | Vai trò |
 |---|---|---|---|
-| `data/gateway-audit.jsonl` | gateway (server) | **mọi** request tới gateway, kể cả `curl` | nhật ký request/response chính |
+| `data/gateway-audit.jsonl` | gateway (server) | **mọi** request, kể cả `curl` | nhật ký request/response chính |
 | `data/tool-audit.jsonl` | tool (client) | chỉ khi dùng `safe_probe` | công cụ đã gửi/nhận gì |
 
-Nhật ký phía gateway trả lời trọn vẹn "ai gọi, lúc nào, tới đâu, method gì,
-header nào, quyết định gì" — mỗi request một dòng JSON (`evidence/08-request-log.txt`):
+Mỗi request là một dòng JSON, trả lời trọn vẹn "ai gọi, lúc nào, tới đâu, method
+gì, header nào, kết quả gì" (`evidence/08-request-log.txt`):
 
 ```json
 {
-  "ts": "2026-08-17T03:13:00.076981+00:00",  // thời gian
-  "client_ip": "172.29.0.1",                 // client nguồn
-  "caller": "key-eefe386a",                  // danh tính = hash(key), KHÔNG phải key
+  "ts": "2026-08-17T03:13:00.076981+00:00",   // thời gian
+  "client_ip": "172.29.0.1",                  // client nguồn
+  "caller": "key-eefe386a",                   // danh tính = hash(key), KHÔNG phải key
   "method": "POST", "path": "/echo",
-  "route": "echo",                           // route khớp trong allowlist
-  "upstream": "http://demo-api:8000/echo",   // request đi tới đâu
+  "route": "echo", "upstream": "http://demo-api:8000/echo",   // đi qua route nào, tới đâu
   "decision": "proxied", "status": 200,
   "req_bytes": 12, "resp_bytes": 25, "truncated": false, "duration_ms": 30.5,
-  "headers": { "user-agent": "curl/8.5.0", "x-api-key": "***REDACTED***" }
+  "headers": { "user-agent": "curl/8.5.0", "x-api-key": "***REDACTED***" }  // key bị che
 }
 ```
 
-**Không lưu API key.** Grep giá trị key trên **cả hai** file → **0** lần.
-Redaction đặt tại sink: phía tool `audit.py::_clean` (quét đệ quy header/field/chuỗi
-phản chiếu), phía gateway `gateway/audit.py` (che header auth + mọi chuỗi trùng key
-trước khi ghi đĩa). `scripts/verify.sh`:
+Redaction đặt tại **sink** (mọi bản ghi đi qua đó trước khi chạm đĩa nên không nơi
+gọi nào "quên" che): phía tool `audit.py::_clean`, phía gateway `gateway/audit.py`.
+`scripts/verify.sh` grep key trên **cả hai** file và cho `PASS`.
 
-```
-== secret scan: API key must not be tracked ==
-PASS: key value not present outside .env
-== audit logs must not contain the key ==
-PASS: no key in any audit log (data/gateway-audit.jsonl data/tool-audit.jsonl)
-```
+## 5. Bằng chứng theo tiêu chí hoàn thành
 
-## 3. Demo: Agent đề xuất, công cụ thực hiện
+> Mọi output sinh tự động bởi `scripts/evidence.sh`, lưu thô trong
+> `reports/evidence/` (xem `00-INDEX.md`). Xoá thư mục rồi chạy lại sẽ cho kết quả
+> tương đương — không chép tay.
 
-`safe_probe plan --goal "input validation"` — planner (Lớp 2) chỉ phát ra
-`route_id + payload_id` từ thực đơn gateway công bố; công cụ tra ngược ra path và
-thực hiện:
+| Tiêu chí hoàn thành | Kết quả | Bằng chứng |
+|---|---|---|
+| Không gọi trực tiếp được endpoint bị cấm | `get /ftp` → **403**, không chạm target | `evidence/07-smoke.txt` |
+| Mọi request đều đi qua gateway | topology `internal: true`, target không có port; gọi thẳng `:8000` → `000` | `evidence/01-topology.txt` |
+| Công cụ xử lý lỗi timeout & kết nối | phân biệt `error="timeout"` vs `connection error`, có test phủ | `tests/test_client.py` |
+| Nhật ký không lưu API key | grep key trên cả hai log = **0**, redaction tại sink | `evidence/05-redaction.txt`, `08-request-log.txt` |
+| Đủ mã 401/403/404/405/413/429/504 | 7/7 PASS | `evidence/07-smoke.txt` |
+| Allowlist do gateway công bố (tool không hard-code) | `GET /_gateway/routes` | `evidence/02-routes.txt` |
 
-```
-# Agent proposes 11 step(s) for goal: 'input validation'
-   4. POST route=echo  payload=empty-string     # exercise input handling
-   5. POST route=echo  payload=wrong-type-int   # exercise input handling
-   ...
-# Tool executes (via gateway):
-   4. POST /echo  [empty-string]    -> 200 echo
-   8. POST /login [empty-string]    -> 422 login   # target từ chối input sai
-```
+**Demo agent đề xuất — công cụ thực hiện.** `safe_probe plan --goal "input
+validation"`: planner chỉ phát ra `route_id + payload_id` từ thực đơn gateway công
+bố, công cụ tra ngược ra path và thực hiện. Planner không ghép URL, không đặt
+header, không thấy key; `plan.validate()` từ chối mọi id ngoài thực đơn
+(`evidence/03-plan.txt`, `tests/test_plan.py`).
 
-Planner không ghép URL, không đặt header, không thấy key; `plan.validate()` từ
-chối mọi id ngoài thực đơn (`tests/test_plan.py`).
+## 6. Chất lượng & cách tái lập
 
-## 4. Chất lượng
-
-- `ruff check` — sạch.
-- `pytest` — 27/27 pass (payloads, redaction, plan, client, bất biến no-import).
-
-## 5. Cách tái lập
+- **Chất lượng:** `ruff check` sạch; `pytest` **27/27 pass** (payloads, redaction,
+  plan, client, bất biến "tool không import gateway"). Xem `evidence/06-verify.txt`.
+- **Tái lập:**
 
 ```bash
 bash scripts/up.sh                 # sinh key -> .env, dựng gateway + demo-api
-set -a; . ./.env; set +a           # nạp SAFE_PROBE_API_KEY cho công cụ
+set -a; . ./.env; set +a           # nạp key cho công cụ
 bash scripts/smoke.sh              # 401/403/404/405/413/429/504
 PYTHONPATH=src python3 -m safe_probe.cli plan --goal "input validation"
-bash scripts/verify.sh             # ruff + pytest + grep key
+bash scripts/verify.sh             # ruff + pytest + grep key (cả 2 log)
 bash scripts/evidence.sh           # sinh lại toàn bộ bằng chứng -> reports/evidence/
 bash scripts/down.sh
 ```
 
-Lưu ý: `smoke.sh` làm cạn rate bucket ở bước cuối; chờ ~70s trước khi chạy lại.
+> `smoke.sh` làm cạn rate bucket ở bước cuối; chờ ~70s trước khi chạy lại `suite`.
 
-## 6. Bàn giao
-
-| Sản phẩm | Trạng thái |
-|---|---|
-| API Gateway hoạt động | ✅ `gateway/` + `docker-compose.yml` |
-| Python Tool gửi request qua Gateway | ✅ `src/safe_probe/` |
-| Tệp cấu hình allowlist | ✅ `gateway/policy.yml` |
-| Nhật ký request và response | ✅ `data/gateway-audit.jsonl` (server, mọi request) + `data/tool-audit.jsonl` (client) |
-| Demo Agent đề xuất + công cụ thực hiện | ✅ `safe_probe plan` |
-
-## 7. Hạn chế và bước tiếp theo
+## 7. Hạn chế và hướng phát triển
 
 - Planner hiện là rule-based (chủ ý — an toàn đến từ thu hẹp đầu ra). Có thể cắm
-  LLM thật vào đúng chỗ `plan.propose` mà không đổi bất biến, miễn là đầu ra vẫn
-  đi qua `plan.validate`.
-- Rate limit và bucket là in-memory theo tiến trình gateway; nếu chạy nhiều
-  replica cần một store dùng chung.
-- `ggshield` chưa cài trong môi trường; `verify.sh` báo SKIP thay vì fail.
+  LLM thật vào `plan.propose` mà không đổi bất biến, miễn đầu ra vẫn qua
+  `plan.validate`.
+- Rate bucket là in-memory theo tiến trình gateway; chạy nhiều replica cần store
+  dùng chung.
+- `ggshield` chưa cài trong môi trường nên `verify.sh` báo SKIP thay vì fail.
