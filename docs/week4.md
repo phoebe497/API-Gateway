@@ -62,7 +62,8 @@ Chốt demo: `docker compose ps` → "target trống cột PORTS; thử `curl lo
 | Endpoint bị cấm không gọi được | ✅ | `get /ftp` → 403 |
 | Mọi request đi qua gateway | ✅ | topology `internal: true`, không port |
 | Xử lý lỗi timeout & kết nối | ✅ | `Result.error` phân biệt `timeout` vs `connection error` |
-| Nhật ký không lưu API key | ✅ | grep key trong log = **0**, redaction tại sink |
+| Có nhật ký request/response | ✅ | `data/gateway-audit.jsonl` (server, bắt mọi request) + `data/tool-audit.jsonl` (client) — xem mục 6 |
+| Nhật ký không lưu API key | ✅ | grep key trên **cả hai** log = **0**, redaction tại sink |
 
 Tất cả tái sinh được bằng `scripts/evidence.sh` → lưu ở `reports/evidence/`.
 Kiểm thử: `ruff` sạch + **27 test** pass.
@@ -191,6 +192,66 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "X-API-Key: $KEY" "$BASE/status/418"
 > Toàn bộ curl trên đã được chạy thật; con số ở comment là output quan sát được.
 > Kết quả này cũng tái sinh tự động qua `scripts/smoke.sh` (7 mã lỗi) và
 > `scripts/evidence.sh` (lưu vào `reports/evidence/`).
+
+## 6. Nhật ký request/response — deliverable #4
+
+Có **hai** file log, hai góc nhìn khác nhau, cả hai đều nằm trong `data/` và
+**không bao giờ chứa API key**:
+
+| File | Ai ghi | Ghi khi nào | Trả lời câu hỏi |
+|---|---|---|---|
+| `data/gateway-audit.jsonl` | **gateway** (server) | **mọi** request tới gateway, kể cả `curl` | request đi qua đâu, tới upstream nào, lúc nào, method gì, header gì, quyết định gì |
+| `data/tool-audit.jsonl` | **tool** (client) | chỉ khi dùng `safe_probe` | tool đã gửi gì, nhận status/route/error nào |
+
+> **Vì sao chạy `curl` mà `data/tool-audit.jsonl` không có gì?** Vì file đó là log
+> **của tool** — `curl` không phải tool nên đương nhiên không ghi vào đó. Log bắt
+> **mọi** traffic (kể cả `curl`) là `data/gateway-audit.jsonl` — ghi bởi chính
+> gateway, đúng tinh thần "guardrail ngoài tiến trình".
+
+**Một dòng log gateway trả lời trọn vẹn các câu hỏi của mentor:**
+
+```json
+{
+  "ts": "2026-08-17T03:13:00.076981+00:00",   // bắn vào thời gian nào
+  "client_ip": "172.29.0.1",                  // từ client nào (IP nguồn)
+  "caller": "key-eefe386a",                   // danh tính caller = hash(key), KHÔNG phải key
+  "method": "POST",                           // qua method nào
+  "path": "/echo",
+  "query": null,
+  "route": "echo",                            // khớp route nào trong allowlist
+  "upstream": "http://demo-api:8000/echo",    // request đi tới đâu (upstream/target)
+  "decision": "proxied",                      // gateway quyết định gì
+  "status": 200,                              // response trả về
+  "req_bytes": 12, "resp_bytes": 25, "truncated": false,
+  "duration_ms": 30.5,
+  "headers": {                                // có trường header nào
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***"             // KEY BỊ CHE ngay tại nơi ghi (sink)
+  }
+}
+```
+
+`decision` phản chiếu đúng pipeline ở mục 5: `unauthorized` (401), `rate_limited`
+(429), `forbidden` (403), `method_not_allowed` (405), `payload_too_large` (413),
+`upstream_timeout` (504), `upstream_unavailable` (502), `proxied` (2xx/4xx của target).
+
+**Xem log sau khi demo bằng curl:**
+
+```bash
+# Toàn bộ request curl vừa gửi đều nằm ở đây, mỗi dòng 1 request:
+tail -n 20 data/gateway-audit.jsonl | python3 -m json.tool 2>/dev/null || tail -n 20 data/gateway-audit.jsonl
+
+# Chứng minh KHÔNG lộ key: tìm key thô -> không có; đếm số dòng đã che -> có
+set -a; . ./.env; set +a
+grep -c "$GATEWAY_API_KEY" data/gateway-audit.jsonl   # → 0 (không có key thô)
+grep -c '\*\*\*REDACTED\*\*\*'  data/gateway-audit.jsonl   # → số request có gửi key
+```
+
+Redaction đặt tại **sink** (`gateway/audit.py`): mọi bản ghi đều đi qua đó trước
+khi chạm đĩa nên không nơi gọi nào "quên" che được. `scripts/verify.sh` grep key
+trên **cả hai** file log và phải cho `PASS`.
 
 ---
 

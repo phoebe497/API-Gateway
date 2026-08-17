@@ -1,7 +1,7 @@
 ===============================================================
 # Suite: every safe payload against every allowlisted route
 # command : safe_probe suite
-# captured: 2026-08-15T14:50:44+07:00
+# captured: 2026-08-17T10:16:40+07:00
 ===============================================================
 
 GET  /health              -> 200 [health] {"status":"ok"}

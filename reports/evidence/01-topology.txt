@@ -1,12 +1,12 @@
 ===============================================================
 # Topology proof: only the gateway publishes a port
 # command : docker compose ps
-# captured: 2026-08-15T14:50:44+07:00
+# captured: 2026-08-17T10:16:40+07:00
 ===============================================================
 
-SERVICE    STATUS          PORTS
-demo-api   Up 14 minutes   
-gateway    Up 14 minutes   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+SERVICE    STATUS         PORTS
+demo-api   Up 2 minutes   
+gateway    Up 2 minutes   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
 
 # demo-api must be UNREACHABLE directly (no published port):
 curl http://localhost:8000/health -> 000 (000 == refused/unreachable)

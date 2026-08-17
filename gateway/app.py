@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from dataclasses import dataclass, field
@@ -7,6 +8,7 @@ from pathlib import Path
 
 import httpx
 import yaml
+from audit import AuditLog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -16,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 # different process and cannot edit this file or these variables.
 
 POLICY_PATH = Path(os.environ.get("POLICY_PATH", "/app/policy.yml"))
+AUDIT_PATH = Path(os.environ.get("GATEWAY_AUDIT_PATH", "/app/data/gateway-audit.jsonl"))
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,7 @@ class RateLimiter:
 policy = Policy.load(POLICY_PATH)
 expected_key = os.environ.get(policy.key_env, "")
 limiter = RateLimiter(capacity=policy.rate_per_minute)
+audit = AuditLog(AUDIT_PATH, secret=expected_key, auth_header=policy.auth_header)
 
 app = FastAPI(title="api-gateway", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -120,6 +124,15 @@ _STRIP_REQUEST_HEADERS = {"host", "content-length", "connection"}
 
 def _client_key(request: Request) -> str:
     return request.headers.get(policy.auth_header, "")
+
+
+def _caller(request: Request) -> str | None:
+    # Identify the caller without ever logging the key: a short, stable
+    # fingerprint of whatever secret was supplied. Absent key -> None.
+    supplied = request.headers.get(policy.auth_header, "")
+    if not supplied:
+        return None
+    return "key-" + hashlib.sha256(supplied.encode()).hexdigest()[:8]
 
 
 def _authorized(request: Request) -> bool:
@@ -155,18 +168,54 @@ async def gateway_routes(request: Request) -> Response:
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
 async def gateway(request: Request, full_path: str) -> Response:
+    start = time.monotonic()
+
+    def log(
+        response: Response,
+        decision: str,
+        route: str | None = None,
+        upstream: str | None = None,
+        req_bytes: int = 0,
+        resp_bytes: int = 0,
+        truncated: bool = False,
+    ) -> Response:
+        # One record per request, whatever the outcome. Answers: when, which
+        # caller/source, which method, which headers, where it was routed, and
+        # what came back. The key is never written (redacted at the sink).
+        audit.write(
+            {
+                "client_ip": request.client.host if request.client else None,
+                "caller": _caller(request),
+                "method": request.method,
+                "path": "/" + full_path,
+                "query": dict(request.query_params) or None,
+                "route": route,
+                "upstream": upstream,
+                "decision": decision,
+                "status": response.status_code,
+                "req_bytes": req_bytes,
+                "resp_bytes": resp_bytes,
+                "truncated": truncated,
+                "duration_ms": round((time.monotonic() - start) * 1000, 1),
+                "headers": dict(request.headers),
+            }
+        )
+        return response
+
     # Reserved control namespace: anything under /_gateway that is not an
     # explicit handler above is simply unknown -> 404 (not an allowlist matter).
     if full_path.startswith("_gateway/") or full_path == "_gateway":
-        return JSONResponse({"error": "not found"}, status_code=404)
+        return log(JSONResponse({"error": "not found"}, status_code=404), "not_found")
 
     # 1) Authentication.
     if not _authorized(request):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return log(JSONResponse({"error": "unauthorized"}, status_code=401), "unauthorized")
 
     # 2) Rate limit (per key).
     if not limiter.allow(_client_key(request)):
-        return JSONResponse({"error": "rate limit exceeded"}, status_code=429)
+        return log(
+            JSONResponse({"error": "rate limit exceeded"}, status_code=429), "rate_limited"
+        )
 
     # 3) Allowlist match. Distinguish "path not allowed" (403) from
     #    "path allowed, wrong verb" (405) so failures are diagnosable.
@@ -179,19 +228,31 @@ async def gateway(request: Request, full_path: str) -> Response:
         path_matched = True
         if route.method != request.method:
             continue
-        return await _proxy(request, route, params)
+        response, meta = await _proxy(request, route, params)
+        return log(response, **meta)
 
     if path_matched:
-        return JSONResponse({"error": "method not allowed"}, status_code=405)
-    return JSONResponse({"error": "forbidden: not in allowlist"}, status_code=403)
+        return log(
+            JSONResponse({"error": "method not allowed"}, status_code=405), "method_not_allowed"
+        )
+    return log(
+        JSONResponse({"error": "forbidden: not in allowlist"}, status_code=403), "forbidden"
+    )
 
 
-async def _proxy(request: Request, route: Route, params: dict[str, str]) -> Response:
-    body = await request.body()
-    if len(body) > policy.max_request_bytes:
-        return JSONResponse({"error": "payload too large"}, status_code=413)
-
+async def _proxy(
+    request: Request, route: Route, params: dict[str, str]
+) -> tuple[Response, dict[str, object]]:
     upstream_url = route.build_upstream(params)
+    body = await request.body()
+    req_bytes = len(body)
+    if req_bytes > policy.max_request_bytes:
+        return (
+            JSONResponse({"error": "payload too large"}, status_code=413),
+            {"decision": "payload_too_large", "route": route.id,
+             "upstream": upstream_url, "req_bytes": req_bytes},
+        )
+
     fwd_headers = {
         k: v
         for k, v in request.headers.items()
@@ -209,9 +270,17 @@ async def _proxy(request: Request, route: Route, params: dict[str, str]) -> Resp
                 content=body if body else None,
             )
     except httpx.TimeoutException:
-        return JSONResponse({"error": "upstream timeout"}, status_code=504)
+        return (
+            JSONResponse({"error": "upstream timeout"}, status_code=504),
+            {"decision": "upstream_timeout", "route": route.id,
+             "upstream": upstream_url, "req_bytes": req_bytes},
+        )
     except httpx.RequestError:
-        return JSONResponse({"error": "upstream unavailable"}, status_code=502)
+        return (
+            JSONResponse({"error": "upstream unavailable"}, status_code=502),
+            {"decision": "upstream_unavailable", "route": route.id,
+             "upstream": upstream_url, "req_bytes": req_bytes},
+        )
 
     content = upstream.content
     truncated = len(content) > policy.max_response_bytes
@@ -222,9 +291,14 @@ async def _proxy(request: Request, route: Route, params: dict[str, str]) -> Resp
     if truncated:
         out_headers["X-Truncated"] = "true"
     media_type = upstream.headers.get("content-type", "application/octet-stream")
-    return Response(
+    response = Response(
         content=content,
         status_code=upstream.status_code,
         media_type=media_type,
         headers=out_headers,
+    )
+    return (
+        response,
+        {"decision": "proxied", "route": route.id, "upstream": upstream_url,
+         "req_bytes": req_bytes, "resp_bytes": len(content), "truncated": truncated},
     )

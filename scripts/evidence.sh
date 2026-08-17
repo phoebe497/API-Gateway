@@ -53,14 +53,16 @@ echo "[evidence] 04 suite (every safe payload x route) - this is slow (self-pace
 
 echo "[evidence] 05 redaction (key must never be logged)"
 {
-  hdr "Audit log never stores the API key" "grep key in data/tool-audit.jsonl + pytest"
+  hdr "Neither audit log stores the API key" "grep key in data/*.jsonl + pytest"
   key_val="$(grep -E '^SAFE_PROBE_API_KEY=' .env | cut -d= -f2-)"
-  # grep -c prints 0 AND exits 1 on no match; keep only its stdout.
-  count="$(grep -cF "${key_val}" data/tool-audit.jsonl 2>/dev/null || true)"
-  echo "occurrences of the live API key in data/tool-audit.jsonl: ${count:-0}  (must be 0)"
+  for lf in data/tool-audit.jsonl data/gateway-audit.jsonl; do
+    # grep -c prints 0 AND exits 1 on no match; keep only its stdout.
+    count="$(grep -cF "${key_val}" "$lf" 2>/dev/null || true)"
+    echo "occurrences of the live API key in ${lf}: ${count:-0}  (must be 0)"
+  done
   echo
-  echo "# a sample audit record (request/response are logged, key is not):"
-  tail -n 1 data/tool-audit.jsonl 2>/dev/null || echo "(no audit log yet)"
+  echo "# a sample tool record (client side; request/response logged, key is not):"
+  tail -n 1 data/tool-audit.jsonl 2>/dev/null || echo "(no tool audit log yet)"
   echo
   echo "# sentinel-based unit proof:"
   PYTHONPATH=src python3 -m pytest tests/test_redaction.py -v 2>&1 | tail -8
@@ -71,6 +73,37 @@ bash scripts/verify.sh > "$OUT/06-verify.txt" 2>&1 || true
 
 echo "[evidence] 07 smoke (refusal codes; DRAINS the bucket, runs last)"
 bash scripts/smoke.sh > "$OUT/07-smoke.txt" 2>&1 || true
+
+echo "[evidence] 08 gateway request/response log (deliverable #4)"
+{
+  hdr "Gateway logs EVERY request (incl. curl): who/when/where/method/headers" "tail data/gateway-audit.jsonl"
+  key_val="$(grep -E '^SAFE_PROBE_API_KEY=' .env | cut -d= -f2-)"
+  leak="$(grep -cF "${key_val}" data/gateway-audit.jsonl 2>/dev/null || true)"
+  redacted="$(grep -c 'REDACTED' data/gateway-audit.jsonl 2>/dev/null || true)"
+  total="$(wc -l < data/gateway-audit.jsonl 2>/dev/null || echo 0)"
+  echo "total logged requests: ${total}"
+  echo "raw API key occurrences: ${leak:-0}  (must be 0)"
+  echo "records with a masked key header (***REDACTED***): ${redacted:-0}"
+  echo
+  echo "# one representative record per decision (x-api-key masked everywhere):"
+  python3 - <<'PY' 2>/dev/null || echo "(no gateway log yet)"
+import json
+seen = {}
+try:
+    for line in open("data/gateway-audit.jsonl", encoding="utf-8"):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        seen.setdefault(rec.get("decision"), rec)
+except FileNotFoundError:
+    raise SystemExit(1)
+for decision in sorted(k for k in seen if k):
+    print(f"--- decision={decision} ---")
+    print(json.dumps(seen[decision], ensure_ascii=False, indent=2))
+    print()
+PY
+} > "$OUT/08-request-log.txt" 2>&1
 
 # A small index so a human knows what each file proves.
 {
@@ -85,9 +118,10 @@ bash scripts/smoke.sh > "$OUT/07-smoke.txt" 2>&1 || true
   echo "| 02-routes.txt   | Allowlist do gateway công bố (công cụ không hard-code) |"
   echo "| 03-plan.txt     | Agent đề xuất request, công cụ thực hiện qua gateway |"
   echo "| 04-suite.txt    | Bảng suite: mọi payload an toàn × mọi route |"
-  echo "| 05-redaction.txt| Nhật ký không lưu API key (grep = 0 + test sentinel) |"
+  echo "| 05-redaction.txt| Cả hai log không lưu API key (grep = 0 + test sentinel) |"
   echo "| 06-verify.txt   | ruff + pytest (27) + quét secret |"
   echo "| 07-smoke.txt    | Đủ mã từ chối 401/403/404/405/413/429/504 |"
+  echo "| 08-request-log.txt | Nhật ký request/response phía gateway (who/when/where/method/headers, key đã che) |"
 } > "$OUT/00-INDEX.md"
 
 echo "[evidence] done -> ${OUT}/"

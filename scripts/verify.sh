@@ -42,12 +42,21 @@ else
 fi
 
 step "audit logs must not contain the key"
-if [ -f .env ] && [ -f data/tool-audit.jsonl ]; then
+# Both logs must be clean: the tool's client-side log AND the gateway's
+# server-side log (the latter records raw curl traffic too).
+logs="$(ls data/*.jsonl 2>/dev/null || true)"
+if [ -f .env ] && [ -n "${logs}" ]; then
   key_val="$(grep -E '^SAFE_PROBE_API_KEY=' .env | cut -d= -f2-)"
-  if [ -n "${key_val}" ] && grep -qF "${key_val}" data/tool-audit.jsonl; then
-    echo "FAIL: API key leaked into data/tool-audit.jsonl"; FAILED=1
+  leaked=""
+  for lf in ${logs}; do
+    if [ -n "${key_val}" ] && grep -qF "${key_val}" "${lf}"; then
+      leaked="${leaked} ${lf}"
+    fi
+  done
+  if [ -n "${leaked}" ]; then
+    echo "FAIL: API key leaked into:${leaked}"; FAILED=1
   else
-    echo "PASS: no key in audit log"
+    echo "PASS: no key in any audit log (${logs//$'\n'/ })"
   fi
 else
   echo "SKIP: no audit log yet"

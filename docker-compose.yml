@@ -13,6 +13,11 @@ services:
       # Supplied by scripts/up.sh via the .env file; never committed.
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?set GATEWAY_API_KEY (run scripts/up.sh)}
       POLICY_PATH: /app/policy.yml
+      GATEWAY_AUDIT_PATH: /app/data/gateway-audit.jsonl
+    volumes:
+      # Persist the gateway's request/response log on the host. data/ is
+      # gitignored (raw output, regenerate-able) and never holds the key.
+      - ./data:/app/data
     networks:
       - edge
       - internal

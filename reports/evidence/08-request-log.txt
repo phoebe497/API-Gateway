@@ -1,0 +1,181 @@
+===============================================================
+# Gateway logs EVERY request (incl. curl): who/when/where/method/headers
+# command : tail data/gateway-audit.jsonl
+# captured: 2026-08-17T10:19:14+07:00
+===============================================================
+
+total logged requests: 196
+raw API key occurrences: 0  (must be 0)
+records with a masked key header (***REDACTED***): 194
+
+# one representative record per decision (x-api-key masked everywhere):
+--- decision=forbidden ---
+{
+  "ts": "2026-08-17T03:12:59.992457+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "GET",
+  "path": "/ftp",
+  "query": null,
+  "route": null,
+  "upstream": null,
+  "decision": "forbidden",
+  "status": 403,
+  "req_bytes": 0,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 0.1,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***"
+  }
+}
+
+--- decision=method_not_allowed ---
+{
+  "ts": "2026-08-17T03:18:32.285697+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "GET",
+  "path": "/echo",
+  "query": null,
+  "route": null,
+  "upstream": null,
+  "decision": "method_not_allowed",
+  "status": 405,
+  "req_bytes": 0,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 0.1,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***"
+  }
+}
+
+--- decision=payload_too_large ---
+{
+  "ts": "2026-08-17T03:18:32.334392+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "POST",
+  "path": "/echo",
+  "query": null,
+  "route": "echo",
+  "upstream": "http://demo-api:8000/echo",
+  "decision": "payload_too_large",
+  "status": 413,
+  "req_bytes": 70002,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 0.4,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***",
+    "content-type": "application/json",
+    "content-length": "70002"
+  }
+}
+
+--- decision=proxied ---
+{
+  "ts": "2026-08-17T03:12:59.943182+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "GET",
+  "path": "/api/items",
+  "query": null,
+  "route": "items-list",
+  "upstream": "http://demo-api:8000/api/items",
+  "decision": "proxied",
+  "status": 200,
+  "req_bytes": 0,
+  "resp_bytes": 123,
+  "truncated": false,
+  "duration_ms": 193.6,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***"
+  }
+}
+
+--- decision=rate_limited ---
+{
+  "ts": "2026-08-17T03:18:38.117921+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "GET",
+  "path": "/health",
+  "query": null,
+  "route": null,
+  "upstream": null,
+  "decision": "rate_limited",
+  "status": 429,
+  "req_bytes": 0,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 0.1,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*",
+    "x-api-key": "***REDACTED***"
+  }
+}
+
+--- decision=unauthorized ---
+{
+  "ts": "2026-08-17T03:12:59.681894+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": null,
+  "method": "GET",
+  "path": "/api/items",
+  "query": null,
+  "route": null,
+  "upstream": null,
+  "decision": "unauthorized",
+  "status": 401,
+  "req_bytes": 0,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 0.2,
+  "headers": {
+    "host": "localhost:8080",
+    "user-agent": "curl/8.5.0",
+    "accept": "*/*"
+  }
+}
+
+--- decision=upstream_timeout ---
+{
+  "ts": "2026-08-17T03:17:16.059588+00:00",
+  "client_ip": "172.29.0.1",
+  "caller": "key-eefe386a",
+  "method": "GET",
+  "path": "/slow",
+  "query": null,
+  "route": "slow",
+  "upstream": "http://demo-api:8000/slow",
+  "decision": "upstream_timeout",
+  "status": 504,
+  "req_bytes": 0,
+  "resp_bytes": 0,
+  "truncated": false,
+  "duration_ms": 5026.3,
+  "headers": {
+    "accept-encoding": "identity",
+    "host": "localhost:8080",
+    "user-agent": "Python-urllib/3.12",
+    "x-api-key": "***REDACTED***",
+    "connection": "close"
+  }
+}
+

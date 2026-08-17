@@ -14,9 +14,10 @@
                                                405/413/429/504
 ```
 
-- `gateway/` — reverse proxy generic, mọi quyết định đọc từ `gateway/policy.yml`.
+- `gateway/` — reverse proxy generic, mọi quyết định đọc từ `gateway/policy.yml`;
+  ghi nhật ký mọi request ra `data/gateway-audit.jsonl` (`gateway/audit.py`).
 - `targets/demo-api/` — target chỉ-đọc/phản chiếu (`/health`, `/api/items`,
-  `/api/items/{id}`, `/slow`, `/echo`, `/login`).
+  `/api/items/{id}`, `/slow`, `/big`, `/status/{code}`, `/echo`, `/login`).
 - `src/safe_probe/` — công cụ Python stdlib-only: `client · limits · payloads ·
   audit · plan · cli`.
 - Lý do thiết kế: `docs/adr/0001` (chọn gateway tự viết) và `docs/adr/0002`
@@ -38,6 +39,7 @@
 | Agent đề xuất + công cụ thực hiện | `evidence/03-plan.txt` |
 | Bảng suite payload × route | `evidence/04-suite.txt` |
 | Nhật ký không lưu key | `evidence/05-redaction.txt` |
+| Nhật ký request/response (gateway) | `evidence/08-request-log.txt` |
 | Đủ mã 401/403/404/405/413/429/504 | `evidence/07-smoke.txt` |
 | ruff + pytest + quét secret | `evidence/06-verify.txt` |
 
@@ -89,17 +91,42 @@ all checks passed
 Được phủ bởi `tests/test_client.py::test_timeout_is_handled` và
 `::test_connection_error_is_handled`.
 
-### 2.5 Nhật ký không lưu API key
+### 2.5 Nhật ký request/response
 
-`data/tool-audit.jsonl` ghi path/status/route/response, nhưng grep giá trị key →
-**0** lần. Redaction đặt tại sink (`audit.py::_clean`, quét đệ quy header, field
-lồng nhau, và chuỗi phản chiếu). `scripts/verify.sh`:
+Có **hai** file log bổ trợ nhau, đều nằm trong `data/`, đều **không** chứa key:
+
+| File | Ai ghi | Ghi khi nào | Vai trò |
+|---|---|---|---|
+| `data/gateway-audit.jsonl` | gateway (server) | **mọi** request tới gateway, kể cả `curl` | nhật ký request/response chính |
+| `data/tool-audit.jsonl` | tool (client) | chỉ khi dùng `safe_probe` | công cụ đã gửi/nhận gì |
+
+Nhật ký phía gateway trả lời trọn vẹn "ai gọi, lúc nào, tới đâu, method gì,
+header nào, quyết định gì" — mỗi request một dòng JSON (`evidence/08-request-log.txt`):
+
+```json
+{
+  "ts": "2026-08-17T03:13:00.076981+00:00",  // thời gian
+  "client_ip": "172.29.0.1",                 // client nguồn
+  "caller": "key-eefe386a",                  // danh tính = hash(key), KHÔNG phải key
+  "method": "POST", "path": "/echo",
+  "route": "echo",                           // route khớp trong allowlist
+  "upstream": "http://demo-api:8000/echo",   // request đi tới đâu
+  "decision": "proxied", "status": 200,
+  "req_bytes": 12, "resp_bytes": 25, "truncated": false, "duration_ms": 30.5,
+  "headers": { "user-agent": "curl/8.5.0", "x-api-key": "***REDACTED***" }
+}
+```
+
+**Không lưu API key.** Grep giá trị key trên **cả hai** file → **0** lần.
+Redaction đặt tại sink: phía tool `audit.py::_clean` (quét đệ quy header/field/chuỗi
+phản chiếu), phía gateway `gateway/audit.py` (che header auth + mọi chuỗi trùng key
+trước khi ghi đĩa). `scripts/verify.sh`:
 
 ```
 == secret scan: API key must not be tracked ==
 PASS: key value not present outside .env
 == audit logs must not contain the key ==
-PASS: no key in audit log
+PASS: no key in any audit log (data/gateway-audit.jsonl data/tool-audit.jsonl)
 ```
 
 ## 3. Demo: Agent đề xuất, công cụ thực hiện
@@ -147,7 +174,7 @@ Lưu ý: `smoke.sh` làm cạn rate bucket ở bước cuối; chờ ~70s trư�
 | API Gateway hoạt động | ✅ `gateway/` + `docker-compose.yml` |
 | Python Tool gửi request qua Gateway | ✅ `src/safe_probe/` |
 | Tệp cấu hình allowlist | ✅ `gateway/policy.yml` |
-| Nhật ký request và response | ✅ `data/tool-audit.jsonl` |
+| Nhật ký request và response | ✅ `data/gateway-audit.jsonl` (server, mọi request) + `data/tool-audit.jsonl` (client) |
 | Demo Agent đề xuất + công cụ thực hiện | ✅ `safe_probe plan` |
 
 ## 7. Hạn chế và bước tiếp theo

@@ -4,13 +4,13 @@
 
 == pytest ==
 ...........................                                              [100%]
-27 passed in 12.23s
+27 passed in 4.62s
 
 == secret scan: API key must not be tracked ==
 PASS: key value not present outside .env
 
 == audit logs must not contain the key ==
-PASS: no key in audit log
+PASS: no key in any audit log (data/gateway-audit.jsonl data/tool-audit.jsonl)
 
 == ggshield (secret scanner) ==
 SKIP: ggshield could not run (needs 'ggshield auth login' / GITGUARDIAN_API_KEY)
