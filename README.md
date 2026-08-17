@@ -14,15 +14,21 @@ là thứ duy nhất quyết định request nào đi tiếp**.
 ```
    safe_probe (tool)  ──X-API-Key──►  gateway  ──►  demo-api
    stdlib-only,                       (policy.yml,   (internal: true,
-   biết 1 URL                          allowlist,     KHÔNG publish port)
+   biết 1 URL          curl ─────►     allowlist,     KHÔNG publish port)
                                        401/403/404/
                                        405/413/429/504)
+                                          │ ghi log mỗi request
+                                          ▼
+                                 data/gateway-audit.jsonl
 ```
 
 - **`gateway/`** — reverse proxy generic (FastAPI). Mọi quyết định (allowlist,
-  rate limit, timeout, kích thước) đọc từ [`gateway/policy.yml`](gateway/policy.yml);
-  `app.py` không hard-code gì. Công bố allowlist qua `GET /_gateway/routes`.
-- **`targets/demo-api/`** — target chỉ-đọc/phản chiếu, nằm trên mạng
+  rate limit, timeout, kích thước body ≤ 64KB / response ≤ 256KB) đọc từ
+  [`gateway/policy.yml`](gateway/policy.yml); `app.py` không hard-code gì. Công bố
+  allowlist qua `GET /_gateway/routes` và ghi nhật ký mọi request ra
+  `data/gateway-audit.jsonl` (`gateway/audit.py`), API key luôn bị che.
+- **`targets/demo-api/`** — target chỉ-đọc/phản chiếu (`/health`, `/api/items`,
+  `/echo`, `/slow`, `/big`, `/status/{code}`, `/login`), nằm trên mạng
   `internal: true` **không publish port** → mọi request đều phải qua gateway.
 - **`src/safe_probe/`** — công cụ Python **stdlib-only**: khám phá allowlist từ
   gateway, gửi GET/POST với payload an toàn, xử lý timeout/lỗi kết nối, redact
@@ -49,8 +55,14 @@ bash scripts/down.sh               # hạ toàn bộ
 
 ```bash
 bash scripts/smoke.sh      # chứng minh 401/403/404/405/413/429/504 bằng curl
-bash scripts/verify.sh     # ruff + pytest (27) + grep key + ggshield
+bash scripts/verify.sh     # ruff + pytest (27) + grep key (cả 2 log) + ggshield
 bash scripts/evidence.sh   # sinh lại toàn bộ bằng chứng -> reports/evidence/
+```
+
+Sau khi gọi request, xem nhật ký phía gateway (bắt mọi request, kể cả `curl`):
+
+```bash
+tail -n 5 data/gateway-audit.jsonl    # mỗi dòng: ai/lúc nào/tới đâu/method/header — key đã che
 ```
 
 Bằng chứng đã chốt: [`reports/evidence/`](reports/evidence/) · Báo cáo:
@@ -60,12 +72,12 @@ Bằng chứng đã chốt: [`reports/evidence/`](reports/evidence/) · Báo cá
 
 | Thư mục | Chứa gì |
 |---|---|
-| `gateway/` | Gateway: `app.py` + `policy.yml` + Dockerfile |
+| `gateway/` | Gateway: `app.py` + `audit.py` + `policy.yml` + Dockerfile |
 | `targets/demo-api/` | Ứng dụng thử nghiệm (FastAPI) |
 | `src/safe_probe/` | Công cụ Python: config, client, limits, payloads, audit, plan, cli |
-| `scripts/` | Entrypoint bash: up/down/smoke/verify/evidence |
+| `scripts/` | Entrypoint bash: up/down/smoke/verify/evidence/demo |
 | `docs/` | Quá trình: ADR + onboarding |
-| `data/` | Output thô (audit log) — regenerate, không commit |
+| `data/` | Output thô (audit log của gateway & tool) — regenerate, không commit |
 | `reports/` | Kết quả: báo cáo + bằng chứng |
 | `tests/` | pytest |
 
@@ -77,7 +89,8 @@ Người mới nên đọc [`docs/onboarding.md`](docs/onboarding.md) trước.
 2. `src/safe_probe/` không import `gateway/` (không chia sẻ code).
 3. Không hard-code allowlist trong tool — hỏi `GET /_gateway/routes`.
 4. Chỉ payload an toàn; SQLi/XSS/traversal bị chặn bởi `FORBIDDEN_PATTERNS`.
-5. Không ghi API key ra bất cứ đâu — redaction tại sink (`audit.py`).
+5. Không ghi API key ra bất cứ đâu — redaction tại sink ở cả hai log
+   (`src/safe_probe/audit.py` phía tool, `gateway/audit.py` phía gateway).
 6. LLM không tự viết URL — `plan.py` chỉ trả `route_id`/`payload_id`.
 
 Mỗi bất biến được cố định bằng test trong [`tests/`](tests/).
