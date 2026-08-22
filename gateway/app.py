@@ -121,6 +121,27 @@ app = FastAPI(title="api-gateway", docs_url=None, redoc_url=None, openapi_url=No
 # Hop-by-hop and identity headers we must not forward upstream.
 _STRIP_REQUEST_HEADERS = {"host", "content-length", "connection"}
 
+# Response headers the gateway must NOT copy back, because they describe a
+# transfer this process has already changed: httpx decompresses the body, and the
+# response may be truncated to max_response_bytes, so any inherited length or
+# encoding would be a lie. Content-Type is re-set from media_type below.
+_STRIP_RESPONSE_HEADERS = {
+    # Belongs to this hop: uvicorn emits its own, so keeping the upstream copy
+    # would put two Date headers on one response.
+    "date",
+    "content-length",
+    "content-encoding",
+    "content-type",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "te",
+    "trailer",
+    "proxy-authenticate",
+    "proxy-authorization",
+}
+
 
 def _client_key(request: Request) -> str:
     return request.headers.get(policy.auth_header, "")
@@ -287,7 +308,19 @@ async def _proxy(
     if truncated:
         content = content[: policy.max_response_bytes]
 
-    out_headers = {"X-Gateway-Route": route.id}
+    # Pass the upstream's own response headers through. A tool that cannot see
+    # them cannot verify a whole class of findings: "missing CSP header" or
+    # "cookie without HttpOnly" are statements ABOUT the headers, so swallowing
+    # them here would force the caller to trust the scanner instead of checking.
+    # Repeated headers (several Set-Cookie lines) arrive comma-joined, which is
+    # enough to observe presence and flags. The gateway's own markers are set
+    # last so they always win.
+    out_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() not in _STRIP_RESPONSE_HEADERS
+    }
+    out_headers["X-Gateway-Route"] = route.id
     if truncated:
         out_headers["X-Truncated"] = "true"
     media_type = upstream.headers.get("content-type", "application/octet-stream")
